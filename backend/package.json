@@ -10,11 +10,15 @@
   },
   "dependencies": {
     "@types/multer": "^2.2.0",
+    "@types/pdf-parse": "^1.1.5",
     "cors": "latest",
     "dotenv": "latest",
     "express": "latest",
+    "mammoth": "^1.12.2",
     "multer": "^2.3.0",
+    "music-metadata": "^11.15.0",
     "openai": "latest",
+    "pdf-parse": "^2.4.5",
     "zod": "latest"
   },
   "devDependencies": {

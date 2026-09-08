@@ -21,6 +21,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import NewProject from "./NewProject";
+import ProjectDetail from "./ProjectDetail";
+import WorkspaceView from "./WorkspaceView";
 
 type ProjectStatus = "Generating visuals" | "Complete" | "Rendering";
 
@@ -76,7 +78,7 @@ function Logo() {
 export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("Dashboard");
-  const [view, setView] = useState<"dashboard" | "new-project">("dashboard");
+  const [view, setView] = useState<"dashboard" | "new-project" | "project-detail" | "workspace">("dashboard");
   const [projects, setProjects] = useState<Project[]>(fallbackProjects);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -94,11 +96,11 @@ export default function Home() {
       const response = await fetch("http://localhost:4000/api/projects");
       if (!response.ok) return;
       const data = await response.json();
-      const liveProjects: Project[] = (data.projects || []).map((project: { id: string; name: string; status: string; stage: string; progress: number; updatedAt: string; steps: Project["steps"] }, index: number) => ({
+      const liveProjects: Project[] = (data.projects || []).map((project: { id: string; name: string; status: string; stage: string; progress: number; updatedAt: string; steps: Project["steps"]; scenes?: unknown[]; audioDurationSeconds?: number | null }, index: number) => ({
         id: project.id,
         title: project.name,
-        sceneCount: 0,
-        duration: "—",
+        sceneCount: project.scenes?.length || 0,
+        duration: project.audioDurationSeconds ? `${Math.floor(project.audioDurationSeconds / 60).toString().padStart(2, "0")}:${Math.floor(project.audioDurationSeconds % 60).toString().padStart(2, "0")}` : "—",
         status: project.status === "complete" ? "Complete" : project.stage === "render" ? "Rendering" : "Generating visuals",
         progress: project.progress,
         updated: relativeTime(project.updatedAt),
@@ -131,6 +133,19 @@ export default function Home() {
     setSidebarOpen(false);
   };
 
+  const openProject = (projectId: string) => {
+    setSelectedProjectId(projectId);
+    setView("project-detail");
+    setActiveNav("Project detail");
+    setSidebarOpen(false);
+  };
+
+  const openWorkspace = (section: "Projects" | "Media" | "Templates" | "Settings") => {
+    setActiveNav(section);
+    setView("workspace");
+    setSidebarOpen(false);
+  };
+
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || projects[0];
   const pipeline = selectedProject?.steps?.map((step, index) => [step.name, step.detail, step.status === "complete" ? "done" : step.status] as const) || fallbackPipeline;
 
@@ -157,7 +172,7 @@ export default function Home() {
         <nav className="dashboard-nav" aria-label="Dashboard navigation">
           <p className="nav-label">Workspace</p>
           {navItems.map(([label, Icon]) => (
-            <button className={activeNav === label ? "dashboard-nav__item dashboard-nav__item--active" : "dashboard-nav__item"} key={label} onClick={() => { setActiveNav(label); notify(`${label} view`); }} type="button">
+            <button className={activeNav === label ? "dashboard-nav__item dashboard-nav__item--active" : "dashboard-nav__item"} key={label} onClick={() => label === "Dashboard" ? (setView("dashboard"), setActiveNav("Dashboard"), setSidebarOpen(false)) : openWorkspace(label)} type="button">
               <Icon size={17} /><span>{label}</span>{label === "Projects" && <b>3</b>}
             </button>
           ))}
@@ -184,9 +199,13 @@ export default function Home() {
           </div>
         </header>
 
-        <main className={`dashboard-content ${view === "new-project" ? "dashboard-content--new-project" : ""}`}>
-          {view === "new-project" ? (
+        <main className={`dashboard-content ${view !== "dashboard" ? "dashboard-content--new-project" : ""}`}>
+          {view === "workspace" && activeNav !== "Dashboard" && activeNav !== "New project" && activeNav !== "Project detail" ? (
+            <WorkspaceView section={activeNav as "Projects" | "Media" | "Templates" | "Settings"} projects={projects} onOpenProject={openProject} onNewProject={openNewProject} />
+          ) : view === "new-project" ? (
             <NewProject onCreated={() => void refreshProjects()} onBack={() => { setView("dashboard"); setActiveNav("Dashboard"); }} />
+          ) : view === "project-detail" && selectedProjectId ? (
+            <ProjectDetail projectId={selectedProjectId} onUpdated={() => void refreshProjects()} onBack={() => { setView("dashboard"); setActiveNav("Dashboard"); }} />
           ) : (
           <>
           <section className="dashboard-welcome">
@@ -216,7 +235,7 @@ export default function Home() {
                 {projects.map((project) => <article className={`project-row ${selectedProject?.id === project.id ? "project-row--selected" : ""}`} key={project.id} onClick={() => setSelectedProjectId(project.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setSelectedProjectId(project.id); }} role="button" tabIndex={0}>
                   <div className="project-thumbnail"><img src={project.image} alt="" /><span className={`project-status project-status--${project.status.split(" ")[0].toLowerCase()}`} /></div>
                   <div className="project-row__body"><div className="project-row__title"><strong>{project.title}</strong><button onClick={() => notify(`${project.title} menu`)} type="button" aria-label={`More options for ${project.title}`}><MoreHorizontal size={17} /></button></div><div className="project-meta"><span>{project.sceneCount} scenes</span><i /> <span>{project.duration}</span><i /> <span>{project.updated}</span></div><div className="project-progress"><span><i style={{ width: `${project.progress}%` }} /></span><b>{project.progress}%</b></div></div>
-                  <div className="project-row__actions"><div className={`project-badge project-badge--${project.status.split(" ")[0].toLowerCase()}`}>{project.status}</div>{project.status !== "Complete" && <button className="project-resume-button" type="button" onClick={() => toast.message(`Resuming ${project.title}`, { description: "The project pipeline is ready to continue." })}>Resume</button>}</div>
+                  <div className="project-row__actions"><div className={`project-badge project-badge--${project.status.split(" ")[0].toLowerCase()}`}>{project.status}</div>{project.status !== "Complete" && <button className="project-resume-button" type="button" onClick={(event) => { event.stopPropagation(); openProject(project.id); }}>Resume</button>}</div>
                 </article>)}
               </div>
             </div>
@@ -224,11 +243,11 @@ export default function Home() {
             <div className="pipeline-panel panel-card">
               <div className="panel-card__header"><div><p className="dashboard-eyebrow">{selectedProject?.title || "SELECTED PROJECT"}</p><h2>Production pipeline</h2></div><button className="panel-icon-button" onClick={() => notify("Pipeline menu")} type="button" aria-label="Pipeline menu"><MoreHorizontal size={17} /></button></div>
               <div className="pipeline-list">{pipeline.map(([stage, status, tone], index) => <div className="pipeline-row" key={stage}><span className={`pipeline-row__marker pipeline-row__marker--${tone}`}>{tone === "done" ? "✓" : index + 1}</span><span><strong>{stage}</strong><small>{status}</small></span>{tone === "active" && <i className="pipeline-row__progress"><b /></i>}</div>)}</div>
-              <div className="pipeline-footer"><span>OVERALL PROGRESS</span><strong>58%</strong><div><i /></div></div>
+              <div className="pipeline-footer"><span>OVERALL PROGRESS</span><strong>{selectedProject?.progress || 0}%</strong><div><i style={{ width: `${selectedProject?.progress || 0}%` }} /></div></div>
             </div>
           </section>
 
-          <section className="activity-bar"><div><span className="activity-dot" /><span><strong>{selectedProject?.status === "Complete" ? "Production is complete" : "Production is in progress"}</strong> on <b>{selectedProject?.title || "your project"}</b></span></div><button onClick={() => notify("Production details")} type="button">Resume production <ChevronDown size={14} /></button></section>
+          <section className="activity-bar"><div><span className="activity-dot" /><span><strong>{selectedProject?.status === "Complete" ? "Production is complete" : "Production is in progress"}</strong> on <b>{selectedProject?.title || "your project"}</b></span></div><button onClick={() => selectedProject && openProject(selectedProject.id)} type="button">Resume production <ChevronDown size={14} /></button></section>
           </>
           )}
         </main>
