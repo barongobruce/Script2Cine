@@ -29,6 +29,10 @@
 .project-name-field { display: grid; flex: 0 0 250px; gap: 8px; color: var(--soft); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .project-name-field input { width: 100%; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--text); padding: 12px 15px; outline: 0; font-size: 12px; font-weight: 400; text-transform: none; }
 .project-name-field input:focus { border-color: var(--amber); }
+.new-project-footer .dashboard-primary-button:disabled { cursor: wait; opacity: .6; transform: none; }
+.project-row__actions { display: grid; justify-items: end; gap: 7px; }
+.project-resume-button { padding: 4px 8px; border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius: 999px; background: transparent; color: var(--amber); font-size: 9px; font-weight: 800; }
+.project-resume-button:hover { background: color-mix(in srgb, var(--amber) 10%, transparent); }
 .source-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 45px; }
 .source-dropzone { min-height: 326px; padding: 24px; border: 1px dashed color-mix(in srgb, var(--soft) 45%, transparent); border-radius: 1rem; background: color-mix(in srgb, var(--surface) 82%, transparent); transition: border-color .18s, background .18s, transform .18s; }
 .source-dropzone:hover, .source-dropzone--dragging { border-color: var(--amber); background: var(--surface-2); transform: translateY(-2px); }

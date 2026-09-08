@@ -91,9 +91,10 @@ function DropZone({ source, file, onFile }: { source: Source; file: File | null;
   );
 }
 
-export default function NewProject({ onBack }: { onBack: () => void }) {
+export default function NewProject({ onBack, onCreated }: { onBack: () => void; onCreated?: () => void }) {
   const [files, setFiles] = useState<Record<SourceKey, File | null>>({ baseScript: null, promptScript: null, audio: null });
   const [projectName, setProjectName] = useState("Untitled production");
+  const [submitting, setSubmitting] = useState(false);
 
   const allSourcesAdded = Object.values(files).every(Boolean);
 
@@ -101,12 +102,29 @@ export default function NewProject({ onBack }: { onBack: () => void }) {
     setFiles((current) => ({ ...current, [key]: file }));
   }
 
-  function startProduction() {
+  async function startProduction() {
     if (!allSourcesAdded) {
       toast.error("Add all three sources first", { description: "Base script, prompt language, and master audio are required." });
       return;
     }
-    toast.success("Sources ready", { description: `${projectName || "Untitled production"} is ready for scene parsing.` });
+    setSubmitting(true);
+    try {
+      const formData = new FormData();
+      formData.append("projectName", projectName || "Untitled production");
+      formData.append("baseScript", files.baseScript!);
+      formData.append("promptScript", files.promptScript!);
+      formData.append("audio", files.audio!);
+      const response = await fetch("http://localhost:4000/api/projects", { method: "POST", body: formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Project upload failed");
+      toast.success("Project created", { description: `${data.project.name} is ready for scene analysis.` });
+      onCreated?.();
+      onBack();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Project upload failed");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -132,7 +150,7 @@ export default function NewProject({ onBack }: { onBack: () => void }) {
 
       <div className="new-project-footer">
         <span>{Object.values(files).filter(Boolean).length} of 3 sources added</span>
-        <button className="dashboard-primary-button" type="button" onClick={startProduction}>Add all three sources <ArrowLeft size={16} className="button-arrow" /></button>
+        <button className="dashboard-primary-button" type="button" onClick={startProduction} disabled={submitting}>{submitting ? "Uploading sources…" : "Add all three sources"} <ArrowLeft size={16} className="button-arrow" /></button>
       </div>
     </section>
   );

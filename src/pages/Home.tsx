@@ -25,6 +25,7 @@ import NewProject from "./NewProject";
 type ProjectStatus = "Generating visuals" | "Complete" | "Rendering";
 
 type Project = {
+  id: string;
   title: string;
   sceneCount: number;
   duration: string;
@@ -32,6 +33,7 @@ type Project = {
   progress: number;
   updated: string;
   image: string;
+  steps?: { name: string; status: "complete" | "active" | "waiting"; detail: string }[];
 };
 
 const assets = {
@@ -40,19 +42,27 @@ const assets = {
   babylon: "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=900&q=80",
 };
 
-const projects: Project[] = [
-  { title: "Jonah — Chapter 1", sceneCount: 31, duration: "03:06", status: "Generating visuals", progress: 58, updated: "Edited 12 min ago", image: assets.jonah },
-  { title: "The Fall of Jericho", sceneCount: 48, duration: "04:52", status: "Complete", progress: 100, updated: "Edited yesterday", image: assets.jericho },
-  { title: "The Last Days of Babylon", sceneCount: 62, duration: "06:11", status: "Rendering", progress: 81, updated: "Edited 2 days ago", image: assets.babylon },
+const fallbackProjects: Project[] = [
+  { id: "demo-jonah", title: "Jonah — Chapter 1", sceneCount: 31, duration: "03:06", status: "Generating visuals", progress: 58, updated: "Edited 12 min ago", image: assets.jonah },
+  { id: "demo-jericho", title: "The Fall of Jericho", sceneCount: 48, duration: "04:52", status: "Complete", progress: 100, updated: "Edited yesterday", image: assets.jericho },
+  { id: "demo-babylon", title: "The Last Days of Babylon", sceneCount: 62, duration: "06:11", status: "Rendering", progress: 81, updated: "Edited 2 days ago", image: assets.babylon },
 ];
 
-const pipeline = [
+const fallbackPipeline = [
   ["Script", "Complete", "done"],
   ["Scene analysis", "Complete", "done"],
   ["Visual generation", "18 / 31 scenes", "active"],
   ["Timeline", "Waiting", "waiting"],
   ["Render", "Waiting", "waiting"],
 ] as const;
+
+function relativeTime(dateString: string) {
+  const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(dateString)) / 1000));
+  if (seconds < 60) return "Updated just now";
+  if (seconds < 3600) return `Updated ${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86400) return `Updated ${Math.floor(seconds / 3600)} hr ago`;
+  return `Updated ${Math.floor(seconds / 86400)} days ago`;
+}
 
 function Logo() {
   return (
@@ -67,6 +77,8 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("Dashboard");
   const [view, setView] = useState<"dashboard" | "new-project">("dashboard");
+  const [projects, setProjects] = useState<Project[]>(fallbackProjects);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     return (window.localStorage.getItem("script2cine-theme") as "light" | "dark") || "light";
@@ -76,6 +88,37 @@ export default function Home() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("script2cine-theme", theme);
   }, [theme]);
+
+  async function refreshProjects() {
+    try {
+      const response = await fetch("http://localhost:4000/api/projects");
+      if (!response.ok) return;
+      const data = await response.json();
+      const liveProjects: Project[] = (data.projects || []).map((project: { id: string; name: string; status: string; stage: string; progress: number; updatedAt: string; steps: Project["steps"] }, index: number) => ({
+        id: project.id,
+        title: project.name,
+        sceneCount: 0,
+        duration: "—",
+        status: project.status === "complete" ? "Complete" : project.stage === "render" ? "Rendering" : "Generating visuals",
+        progress: project.progress,
+        updated: relativeTime(project.updatedAt),
+        image: Object.values(assets)[index % Object.values(assets).length],
+        steps: project.steps,
+      }));
+      if (liveProjects.length) {
+        setProjects(liveProjects);
+        setSelectedProjectId((current) => current && liveProjects.some((project) => project.id === current) ? current : liveProjects[0].id);
+      }
+    } catch {
+      // The dashboard keeps its demo data until the backend is available.
+    }
+  }
+
+  useEffect(() => {
+    void refreshProjects();
+    const interval = window.setInterval(() => void refreshProjects(), 10000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   const notify = (message: string) => {
     toast.message(message, { description: "This dashboard action is ready for backend wiring." });
@@ -87,6 +130,9 @@ export default function Home() {
     setActiveNav("New project");
     setSidebarOpen(false);
   };
+
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) || projects[0];
+  const pipeline = selectedProject?.steps?.map((step, index) => [step.name, step.detail, step.status === "complete" ? "done" : step.status] as const) || fallbackPipeline;
 
   const navItems = [
     ["Dashboard", LayoutDashboard],
@@ -140,7 +186,7 @@ export default function Home() {
 
         <main className={`dashboard-content ${view === "new-project" ? "dashboard-content--new-project" : ""}`}>
           {view === "new-project" ? (
-            <NewProject onBack={() => { setView("dashboard"); setActiveNav("Dashboard"); }} />
+            <NewProject onCreated={() => void refreshProjects()} onBack={() => { setView("dashboard"); setActiveNav("Dashboard"); }} />
           ) : (
           <>
           <section className="dashboard-welcome">
@@ -167,22 +213,22 @@ export default function Home() {
             <div className="recent-projects panel-card">
               <div className="panel-card__header"><div><p className="dashboard-eyebrow">YOUR WORKSPACE</p><h2>Recent projects</h2></div><button className="panel-link" onClick={() => notify("All projects")} type="button">View all <ChevronDown size={14} /></button></div>
               <div className="project-list">
-                {projects.map((project) => <article className="project-row" key={project.title}>
+                {projects.map((project) => <article className={`project-row ${selectedProject?.id === project.id ? "project-row--selected" : ""}`} key={project.id} onClick={() => setSelectedProjectId(project.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setSelectedProjectId(project.id); }} role="button" tabIndex={0}>
                   <div className="project-thumbnail"><img src={project.image} alt="" /><span className={`project-status project-status--${project.status.split(" ")[0].toLowerCase()}`} /></div>
                   <div className="project-row__body"><div className="project-row__title"><strong>{project.title}</strong><button onClick={() => notify(`${project.title} menu`)} type="button" aria-label={`More options for ${project.title}`}><MoreHorizontal size={17} /></button></div><div className="project-meta"><span>{project.sceneCount} scenes</span><i /> <span>{project.duration}</span><i /> <span>{project.updated}</span></div><div className="project-progress"><span><i style={{ width: `${project.progress}%` }} /></span><b>{project.progress}%</b></div></div>
-                  <div className={`project-badge project-badge--${project.status.split(" ")[0].toLowerCase()}`}>{project.status}</div>
+                  <div className="project-row__actions"><div className={`project-badge project-badge--${project.status.split(" ")[0].toLowerCase()}`}>{project.status}</div>{project.status !== "Complete" && <button className="project-resume-button" type="button" onClick={() => toast.message(`Resuming ${project.title}`, { description: "The project pipeline is ready to continue." })}>Resume</button>}</div>
                 </article>)}
               </div>
             </div>
 
             <div className="pipeline-panel panel-card">
-              <div className="panel-card__header"><div><p className="dashboard-eyebrow">JONAH — CHAPTER 1</p><h2>Production pipeline</h2></div><button className="panel-icon-button" onClick={() => notify("Pipeline menu")} type="button" aria-label="Pipeline menu"><MoreHorizontal size={17} /></button></div>
+              <div className="panel-card__header"><div><p className="dashboard-eyebrow">{selectedProject?.title || "SELECTED PROJECT"}</p><h2>Production pipeline</h2></div><button className="panel-icon-button" onClick={() => notify("Pipeline menu")} type="button" aria-label="Pipeline menu"><MoreHorizontal size={17} /></button></div>
               <div className="pipeline-list">{pipeline.map(([stage, status, tone], index) => <div className="pipeline-row" key={stage}><span className={`pipeline-row__marker pipeline-row__marker--${tone}`}>{tone === "done" ? "✓" : index + 1}</span><span><strong>{stage}</strong><small>{status}</small></span>{tone === "active" && <i className="pipeline-row__progress"><b /></i>}</div>)}</div>
               <div className="pipeline-footer"><span>OVERALL PROGRESS</span><strong>58%</strong><div><i /></div></div>
             </div>
           </section>
 
-          <section className="activity-bar"><div><span className="activity-dot" /><span><strong>Visual generation is running</strong> on <b>Jonah — Chapter 1</b></span></div><button onClick={() => notify("Production details")} type="button">View production <ChevronDown size={14} /></button></section>
+          <section className="activity-bar"><div><span className="activity-dot" /><span><strong>{selectedProject?.status === "Complete" ? "Production is complete" : "Production is in progress"}</strong> on <b>{selectedProject?.title || "your project"}</b></span></div><button onClick={() => notify("Production details")} type="button">Resume production <ChevronDown size={14} /></button></section>
           </>
           )}
         </main>

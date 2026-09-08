@@ -2,10 +2,20 @@ import OpenAI from "openai";
 import { normalizeShots, validateProductionPlan } from "./timing.js";
 import type { ParseRequest, ProductionPlan, RawShot } from "./types.js";
 
-const client = new OpenAI({
-  apiKey: process.env.LLM_API_KEY,
-  baseURL: process.env.LLM_BASE_URL,
-});
+let client: OpenAI | null = null;
+
+function getClient() {
+  if (client) return client;
+  const apiKey = process.env.LLM_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("LLM credentials are not configured. Add LLM_API_KEY to backend/.env before parsing a script.");
+  }
+  client = new OpenAI({
+    apiKey,
+    baseURL: process.env.LLM_BASE_URL,
+  });
+  return client;
+}
 
 const productionPlanSchema = {
   type: "object",
@@ -75,7 +85,7 @@ SCRIPT:\n${input.scriptText}`;
 }
 
 export async function parseScript(input: ParseRequest): Promise<ProductionPlan> {
-  const response = await client.chat.completions.create({
+  const response = await getClient().chat.completions.create({
     model: process.env.LLM_MODEL || "gpt-5-mini",
     messages: [
       { role: "system", content: "You are a precise cinematic production planner. Return only valid JSON." },
@@ -111,3 +121,4 @@ export async function parseScript(input: ParseRequest): Promise<ProductionPlan> 
   plan.validation = validateProductionPlan(plan);
   return plan;
 }
+
