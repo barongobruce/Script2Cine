@@ -147,7 +147,7 @@ export default function Home() {
   };
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || projects[0];
-  const pipeline = selectedProject?.steps?.map((step, index) => [step.name, step.detail, step.status === "complete" ? "done" : step.status] as const) || fallbackPipeline;
+  const pipeline = selectedProject?.steps?.map((step) => [step.name, step.detail, step.status === "complete" ? "done" : step.status] as const) || fallbackPipeline;
 
   const navItems = [
     ["Dashboard", LayoutDashboard],
@@ -255,3 +255,4 @@ export default function Home() {
     </div>
   );
 }
+

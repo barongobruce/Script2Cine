@@ -1,7 +1,8 @@
-import fs from "node:fs";
+﻿import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Express } from "express";
+import type { RenderJob } from "./renderTypes.js";
 
 export type ProjectStage = "source-material" | "scene-analysis" | "visual-generation" | "timeline" | "render" | "complete";
 export type ProjectStepStatus = "complete" | "active" | "waiting";
@@ -56,19 +57,22 @@ export type ProductionDirection = {
   characters: CharacterProfile[];
 };
 
-export type GenerationJobStatus = "queued" | "preparing" | "generating" | "complete" | "failed";
+export type GenerationJobStatus = "queued" | "preparing" | "submitting" | "generating" | "downloading" | "complete" | "failed" | "cancelled";
 
 export type GenerationJob = {
   id: string;
   sceneId: string;
   sceneNumber: number;
-  provider: "google-flow";
+  provider: "google-flow" | "google-veo";
   status: GenerationJobStatus;
   prompt: string;
   createdAt: string;
   updatedAt: string;
   outputUrl?: string;
+  localFilePath?: string;
   error?: string;
+  progress?: number;
+  progressDetail?: string;
 };
 
 export type TimelineItem = {
@@ -104,6 +108,7 @@ export type Project = {
   generationJobs?: GenerationJob[];
   timeline?: TimelineItem[];
   timelineApproved?: boolean;
+  renderJob?: RenderJob;
 };
 
 export const defaultDirection: ProductionDirection = {

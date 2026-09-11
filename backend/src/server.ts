@@ -11,6 +11,9 @@ import { extractAudioDuration, extractText } from "./fileExtractor.js";
 import { analyzeScenes } from "./sceneAnalyzer.js";
 import { createProject, getProject, getUploadPath, listProjects, updateDirection, updateProject, type ProductionDirection } from "./projectStore.js";
 import { queueApprovedScenes } from "./generationQueue.js";
+import { cancelGeneration, generateAndDownloadScene } from "./veoClient.js";
+import { renderProject } from "./renderService.js";
+import type { RenderSettings } from "./renderTypes.js";
 import { parseRequestSchema } from "./types.js";
 
 const app = express();
@@ -18,6 +21,12 @@ const port = Number(process.env.PORT || 4000);
 
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "2mb" }));
+const renderDirectory = path.resolve(process.env.PROJECT_DATA_DIR || "./data", "renders");
+fs.mkdirSync(renderDirectory, { recursive: true });
+app.use("/renders", express.static(renderDirectory));
+const videoDirectory = path.resolve(process.env.PROJECT_DATA_DIR || "./data", "videos");
+fs.mkdirSync(videoDirectory, { recursive: true });
+app.use("/videos", express.static(videoDirectory));
 
 const uploadDirectory = path.resolve(process.env.PROJECT_DATA_DIR || "./data", "uploads");
 fs.mkdirSync(uploadDirectory, { recursive: true });
@@ -150,6 +159,53 @@ app.post("/api/projects/:id/generation-queue", (request, response) => {
   }
 });
 
+app.post("/api/projects/:id/generation-jobs/:jobId/generate", (request, response) => {
+  const project = getProject(request.params.id);
+  if (!project) { response.status(404).json({ error: "Project not found" }); return; }
+  const job = project.generationJobs?.find((item) => item.id === request.params.jobId);
+  const scene = project.scenes?.find((item) => item.id === job?.sceneId);
+  if (!job || !scene) { response.status(404).json({ error: "Generation job or scene not found" }); return; }
+  if (["submitting", "generating", "downloading"].includes(job.status)) { response.status(409).json({ error: "This scene is already generating" }); return; }
+  const started = updateProject(project.id, { generationJobs: project.generationJobs?.map((item) => item.id === job.id ? { ...item, provider: "google-veo", status: "preparing", progress: 0, progressDetail: "Preparing generation", error: undefined, updatedAt: new Date().toISOString() } : item) });
+  response.status(202).json({ project: started, message: "Veo generation started. Progress will update automatically." });
+  void generateAndDownloadScene(project, scene, job.id, (status, progress, detail) => {
+    const latest = getProject(project.id);
+    if (!latest) return;
+    updateProject(latest.id, { generationJobs: (latest.generationJobs || []).map((item) => item.id === job.id ? { ...item, status, progress, progressDetail: detail, updatedAt: new Date().toISOString() } : item) });
+  }).then(({ absolutePath, publicPath }) => {
+    const latest = getProject(project.id);
+    if (!latest) return;
+    const jobs = (latest.generationJobs || []).map((item) => item.id === job.id ? { ...item, provider: "google-veo" as const, status: "complete" as const, progress: 100, progressDetail: "MP4 downloaded", outputUrl: publicPath, localFilePath: absolutePath, error: undefined, updatedAt: new Date().toISOString() } : item);
+    const complete = jobs.filter((item) => item.status === "complete").length;
+    const failed = jobs.filter((item) => item.status === "failed").length;
+    const allFinished = jobs.length > 0 && complete + failed === jobs.length;
+    updateProject(latest.id, { generationJobs: jobs, stage: allFinished && failed === 0 ? "timeline" : "visual-generation", progress: allFinished && failed === 0 ? 75 : Math.max(latest.progress, 60), steps: latest.steps.map((step) => step.name === "Visual generation" ? { ...step, status: allFinished && failed === 0 ? "complete" : "active", detail: `${complete} / ${jobs.length} clips downloaded${failed ? ` · ${failed} failed` : ""}` } : step) });
+  }).catch((error) => {
+    const latest = getProject(project.id);
+    if (!latest) return;
+    const cancelled = error instanceof Error && error.message === "Generation cancelled";
+    updateProject(latest.id, { generationJobs: (latest.generationJobs || []).map((item) => item.id === job.id ? { ...item, status: cancelled ? "cancelled" as const : "failed" as const, progressDetail: cancelled ? "Generation cancelled" : "Generation failed", error: cancelled ? undefined : error instanceof Error ? error.message : "Veo generation failed", updatedAt: new Date().toISOString() } : item) });
+  });
+});
+
+app.post("/api/projects/:id/generation-jobs/:jobId/cancel", (request, response) => {
+  const project = getProject(request.params.id);
+  if (!project) { response.status(404).json({ error: "Project not found" }); return; }
+  const cancelled = cancelGeneration(request.params.jobId);
+  if (!cancelled) { response.status(409).json({ error: "This job is not currently running" }); return; }
+  const updatedProject = updateProject(project.id, { generationJobs: (project.generationJobs || []).map((item) => item.id === request.params.jobId ? { ...item, status: "cancelled" as const, progressDetail: "Cancellation requested", updatedAt: new Date().toISOString() } : item) });
+  response.json({ project: updatedProject });
+});
+
+app.post("/api/projects/:id/generation-jobs/retry-failed", (request, response) => {
+  const project = getProject(request.params.id);
+  if (!project) { response.status(404).json({ error: "Project not found" }); return; }
+  const jobs = (project.generationJobs || []).filter((item) => item.status === "failed" || item.status === "cancelled");
+  if (!jobs.length) { response.status(400).json({ error: "There are no failed or cancelled jobs to retry" }); return; }
+  const updatedProject = updateProject(project.id, { generationJobs: (project.generationJobs || []).map((item) => jobs.some((job) => job.id === item.id) ? { ...item, status: "queued" as const, progress: 0, progressDetail: "Queued for retry", error: undefined, updatedAt: new Date().toISOString() } : item) });
+  response.json({ project: updatedProject, jobIds: jobs.map((job) => job.id) });
+});
+
 app.patch("/api/projects/:id/generation-jobs/:jobId", (request, response) => {
   const project = getProject(request.params.id);
   if (!project) {
@@ -162,7 +218,7 @@ app.patch("/api/projects/:id/generation-jobs/:jobId", (request, response) => {
     response.status(404).json({ error: "Generation job not found" });
     return;
   }
-  const allowed = ["queued", "preparing", "generating", "complete", "failed"];
+  const allowed = ["queued", "preparing", "submitting", "generating", "downloading", "complete", "failed", "cancelled"];
   if (!allowed.includes(request.body?.status)) {
     response.status(400).json({ error: "Invalid generation status" });
     return;
@@ -210,6 +266,31 @@ app.patch("/api/projects/:id/timeline", (request, response) => {
     return step;
   }) });
   response.json({ project: updatedProject });
+});
+
+app.post("/api/projects/:id/render", async (request, response) => {
+  const project = getProject(request.params.id);
+  if (!project) { response.status(404).json({ error: "Project not found" }); return; }
+  const settings: RenderSettings = {
+    aspectRatio: typeof request.body?.aspectRatio === "string" ? request.body.aspectRatio : project.direction.aspectRatio,
+    width: Number(request.body?.width) || 1920,
+    height: Number(request.body?.height) || 1080,
+    frameRate: Number(request.body?.frameRate) || 24,
+    format: "mp4",
+    includeCaptions: request.body?.includeCaptions !== false,
+  };
+  try {
+    updateProject(project.id, { status: "in-progress", stage: "render", progress: 95, steps: project.steps.map((step) => step.name === "Render" ? { ...step, status: "active", detail: "Encoding MP4 with FFmpeg" } : step) });
+    const renderJob = await renderProject(project, settings);
+    const updatedProject = updateProject(project.id, { renderJob, status: "complete", stage: "complete", progress: 100, steps: project.steps.map((step) => step.name === "Render" ? { ...step, status: "complete", detail: "Final MP4 ready" } : step) });
+    response.status(201).json({ project: updatedProject, renderJob });
+  } catch (error) { response.status(400).json({ error: error instanceof Error ? error.message : "Render preparation failed" }); }
+});
+
+app.get("/api/projects/:id/render", (request, response) => {
+  const project = getProject(request.params.id);
+  if (!project) { response.status(404).json({ error: "Project not found" }); return; }
+  response.json({ renderJob: project.renderJob || null });
 });
 
 app.post(

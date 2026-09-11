@@ -11,3 +11,12 @@ dist/
 .env
 .env.*
 !.env.example
+
+backend/.env
+.env
+.env.*
+!.env.example
+backend/data/uploads/
+backend/data/videos/
+backend/data/renders/
+

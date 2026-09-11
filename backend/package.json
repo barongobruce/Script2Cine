@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@google/genai": "^2.22.0",
     "@types/multer": "^2.2.0",
     "@types/pdf-parse": "^1.1.5",
     "cors": "latest",

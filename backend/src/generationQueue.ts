@@ -34,7 +34,7 @@ export function queueApprovedScenes(project: Project) {
     id: randomUUID(),
     sceneId: scene.id,
     sceneNumber: scene.sceneNumber,
-    provider: "google-flow",
+    provider: "google-veo",
     status: "queued",
     prompt: buildFlowPrompt(project, scene),
     createdAt: now,
